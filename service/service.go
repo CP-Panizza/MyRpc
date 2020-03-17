@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
-		"net"
-	"net/rpc"
-	)
+	"./MyRpc"
+)
 
 type User struct {
 	Name string
@@ -22,24 +21,29 @@ func (h *HelleService) Hello(req string, resp *User) error {
 	return nil
 }
 
+
 func (h *HelleService) Say(req string, resp *string) error {
 	fmt.Println("req:", req)
 	*resp = "return cmj"
 	return nil
 }
 
+type MyService struct {
+
+}
+
+
+func (h *MyService) Do(req string, resp *string) error {
+	fmt.Println("req:", req)
+	*resp = "return cmj"
+	return nil
+}
 
 func main() {
-
-	err := rpc.Register(new(HelleService))
-	if err != nil {
-		panic(err)
-	}
-
-	listen, err := net.Listen("tcp", ":8888")
-	if err != nil {
-		panic(err)
-	}
-
-	rpc.Accept(listen)
+	myrpc := MyRpc.MyRpc{}
+	myrpc.Register(new(struct{
+		HelleService
+		MyService
+	}))
+	myrpc.StartServer(8888)
 }
