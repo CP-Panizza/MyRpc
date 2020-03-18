@@ -5,10 +5,21 @@ import (
 	"net/rpc"
 	"net"
 	"strconv"
-	)
+		"encoding/json"
+	"fmt"
+	"errors"
+)
 
 type MyRpc struct {
 	infos []string
+	RegisterCenterIp string
+}
+
+func NewMyRpc(ip string) *MyRpc{
+	if ip == "" {
+		panic(errors.New("SET INVALID IP"))
+	}
+	return &MyRpc{RegisterCenterIp:ip}
 }
 
 
@@ -41,12 +52,73 @@ func (this *MyRpc)getInfo(instance interface{}){
 
 
 
-func (this *MyRpc)sendDataToRegistCenter(){
+func (this *MyRpc)sendDataToRegistCenter(port int){
+	type RegiestServiceData struct {
+		Op          string
+		ServiceList []string
+		ServicePort string
+	}
 
+	conn, err := net.Dial("tcp", this.RegisterCenterIp + ":8527")
+	if err != nil {
+		panic(err)
+	}
+
+	sendData, err := json.Marshal(RegiestServiceData{
+		"REG",
+		this.infos,
+		":" + strconv.Itoa(port),
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = conn.Write(sendData)
+	if err != nil {
+		panic(err)
+	}
+
+	data := make([]byte, 4096)
+	index, err := conn.Read(data)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("success regist, resave: %s", data[:index])
+	conn.Close()
+}
+
+func (this *MyRpc)startHeartCheck(){
+	listen, err := net.ListenTCP("tcp", &net.TCPAddr{Port:8528})
+
+	if err != nil {
+		panic(err)
+	}
+
+	for {
+		accept(listen)
+	}
 }
 
 
+func accept(listen *net.TCPListener){
+	connect, err := listen.Accept()
+	if err != nil {
+		panic(err)
+	}
+	buf := make([]byte, 64)
+	index, err := connect.Read(buf)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("resave: %s", buf[:index])
+	connect.Write([]byte("hello registerCenter!"))
+	connect.Close()
+}
+
 func (this *MyRpc)StartServer(port int){
+	go this.startHeartCheck()
+	this.sendDataToRegistCenter(port)
 	listen, err := net.Listen("tcp", ":" + strconv.Itoa(port))
 	if err != nil {
 		panic(err)

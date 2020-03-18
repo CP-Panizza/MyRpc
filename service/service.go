@@ -14,10 +14,15 @@ type HelleService struct {
 
 }
 
-func (h *HelleService) Hello(req string, resp *User) error {
-	fmt.Println("req:", req)
-	(*resp).Name = "Hello"
-	(*resp).Age = 100
+func (h *HelleService) Hello(req int, resp *int) error {
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	*resp = 10/req;
+
 	return nil
 }
 
@@ -39,8 +44,9 @@ func (h *MyService) Do(req string, resp *string) error {
 	return nil
 }
 
+
 func main() {
-	myrpc := MyRpc.MyRpc{}
+	myrpc := MyRpc.NewMyRpc("127.0.0.1")
 	myrpc.Register(new(struct{
 		HelleService
 		MyService
