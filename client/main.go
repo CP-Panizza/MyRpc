@@ -37,7 +37,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	client.StartPull()
+	client.StartPull(func(err error) {
+		if err != nil {
+			log.Println(err)
+		}
+	})
 
 	for i := 5; i <= 10; i++ {
 		go func() {
@@ -246,14 +250,11 @@ func (this *MyRpcClient) Init() error {
 }
 
 //每隔一段时间去注册中心拉取一下服务
-func (this *MyRpcClient) StartPull() {
+func (this *MyRpcClient) StartPull(callBack func(err error)) {
 	ticker := time.NewTicker(time.Second * 5)
 	go func() {
 		for _ = range ticker.C {
-			err := this.pullService()
-			if err != nil {
-				log.Println(err)
-			}
+			callBack(this.pullService())
 		}
 	}()
 }
