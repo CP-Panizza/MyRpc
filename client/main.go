@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net"
 	"encoding/json"
-	"time"
-	"log"
 	"sync"
+	"time"
+	"github.com/pkg/errors"
+	"math/rand"
+	"log"
 )
 
 //定义传输数据格式
@@ -29,23 +31,42 @@ type AddUser struct {
 
 func main() {
 	service := HelleServiceInterface{}
-	clinet := NewMyRpcClient("127.0.0.1")
-	clinet.Implement(&service)
-	var u *int
-	err := service.Hello(0, u)
-	if err != "nil" {
-		println(err)
+	client := NewMyRpcClient("127.0.0.1")
+	client.Implement(&service)
+	err := client.Init()
+	if err != nil {
+		panic(err)
 	}
-	fmt.Println(u)
-	var str string
-	service.Say("dasfaf", &str)
-	fmt.Println(str)
+	client.StartPull()
+
+	for i := 5; i <= 10; i++ {
+		go func() {
+			for {
+				var u int
+				err := service.Hello(10, &u)
+				if err != "nil" {
+					println(err)
+				}
+				fmt.Println(u)
+				var str string
+				err = service.Say("dasfaf", &str)
+				if err != "nil" {
+					println(err)
+				}
+				fmt.Println(str)
+			}
+		}()
+	}
+
+	for {
+		time.Sleep(time.Minute)
+	}
 }
 
 //构造MyRpcClient
 func NewMyRpcClient(ip string) *MyRpcClient {
 	clinet := new(MyRpcClient)
-	clinet.serviceMap = map[string]*[]string{}
+	clinet.serviceMap = map[string][]*CircuitBreaker{}
 	clinet.RegisterCenterIp = ip
 	return clinet
 }
@@ -54,7 +75,62 @@ type MyRpcClient struct {
 	mutex            sync.Mutex
 	RegisterCenterIp string
 	serviceList      []string
-	serviceMap       map[string]*[]string
+	serviceMap       map[string][]*CircuitBreaker
+}
+
+const (
+	HALF_OPEN int = 0
+	CLOSED    int = 1
+	OPEN      int = 2
+)
+
+//熔断器
+type CircuitBreaker struct {
+	failuerThreshold int           //故障次数阈值
+	retryTimePeriod  time.Duration //失败后从新尝试的时间间隔 纳秒
+	lastFailureTime  time.Duration
+	failureCount     int
+	state            int
+	ServiceIp        string
+	Mutex            sync.Mutex
+}
+
+func NewCircuitBreaker(serviceIp string, failuerThreshold int, retryTimePeriod time.Duration) *CircuitBreaker {
+	cb := new(CircuitBreaker)
+	cb.ServiceIp = serviceIp
+	cb.failuerThreshold = failuerThreshold
+	cb.failureCount = 0
+	cb.retryTimePeriod = retryTimePeriod
+	cb.lastFailureTime = 0
+	cb.state = CLOSED
+	return cb
+}
+
+func (this *CircuitBreaker) GetState() int {
+	return this.state
+}
+
+func (this *CircuitBreaker) ReSet() {
+	this.failureCount = 0
+	this.lastFailureTime = 0
+	this.state = CLOSED
+}
+
+func (this *CircuitBreaker) SetState() {
+	if this.failureCount > this.failuerThreshold {
+		if (time.Now().Nanosecond() - int(this.lastFailureTime)) > int(this.retryTimePeriod) {
+			this.state = HALF_OPEN
+		} else {
+			this.state = OPEN
+		}
+	} else {
+		this.state = CLOSED
+	}
+}
+
+func (this *CircuitBreaker) RecordFailure() {
+	this.failureCount += 1
+	this.lastFailureTime = time.Duration(time.Now().Nanosecond())
 }
 
 type pullRecvData struct {
@@ -94,7 +170,7 @@ func (this *MyRpcClient) pullService() error {
 		return err
 	}
 
-	fmt.Printf("resave: %s", data[:index])
+	fmt.Printf("resave: %s\n", data[:index])
 
 	recvData := pullRecvData{}
 	err = json.Unmarshal(data[:index], &recvData)
@@ -102,13 +178,53 @@ func (this *MyRpcClient) pullService() error {
 		return err
 	}
 
+	tempList := recvData.Data
+
+	for _, ipsMap := range tempList {
+		for serverName, ipsList := range ipsMap {
+			if len(ipsList) != 0 {
+				temp := new([]*CircuitBreaker)
+				for _, ip := range ipsList {
+					cb := NewCircuitBreaker(ip, 5, time.Minute*1)
+					*temp = append(*temp, cb)
+				}
+				this.mutex.Lock()
+				this.serviceMap[serverName] = *temp
+				this.mutex.Unlock()
+			} else {
+				this.mutex.Lock()
+				delete(this.serviceMap, serverName)
+				this.mutex.Unlock()
+			}
+		}
+	}
+
 	conn.Close()
 	return nil
 }
 
+//func count(in []*CircuitBreaker, target string) bool {
+//	if len(in) == 0 {
+//		return false
+//	}
+//	for _, v := range in {
+//		if v.ServiceIp == target {
+//			return true
+//		}
+//	}
+//	return false
+//}
+
 //负载均衡算法，通过传入服务名称，负载均衡算法计算得出对应的服务器IP地址--多线程环境
-func (this *MyRpcClient) load_balance(serviceName string) (string, error) {
-	return "127.0.0.1:8888", nil
+func (this *MyRpcClient) load_balance(serviceName string) (*CircuitBreaker, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	cbs, ok := this.serviceMap[serviceName];
+	if !ok {
+		return nil, errors.New("CAN NOT FIND '" + serviceName + "' IN LOCAL SERVER TABLE")
+	}
+	rand.Seed(time.Now().Unix())
+	return cbs[rand.Intn(len(cbs))], nil
 }
 
 //rpc调用远程服务--多线程环境
@@ -125,6 +241,23 @@ func (this *MyRpcClient) call(serverName string, serverIp string, args []reflect
 	return "nil"
 }
 
+func (this *MyRpcClient) Init() error {
+	return this.pullService()
+}
+
+//每隔一段时间去注册中心拉取一下服务
+func (this *MyRpcClient) StartPull() {
+	ticker := time.NewTicker(time.Second * 5)
+	go func() {
+		for _ = range ticker.C {
+			err := this.pullService()
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}()
+}
+
 //动态对结构体进行代理,实现对应接口
 func (this *MyRpcClient) Implement(i ...interface{}) {
 	for _, v := range i {
@@ -135,26 +268,29 @@ func (this *MyRpcClient) Implement(i ...interface{}) {
 			server := typ.Field(index).Tag.Get("service")
 			this.serviceList = append(this.serviceList, server)
 			proxyFunc := reflect.MakeFunc(funcType, func(args []reflect.Value) (results []reflect.Value) {
-				serverIp, err := this.load_balance(server)
+				serverCB, err := this.load_balance(server)
 				if err != nil {
 					return []reflect.Value{reflect.ValueOf(err.Error())}
 				}
-				errMsg := this.call(server, serverIp, args)
-				return []reflect.Value{reflect.ValueOf(errMsg)}
+				serverCB.Mutex.Lock()
+				defer serverCB.Mutex.Unlock()
+				serverCB.SetState()
+				switch serverCB.GetState() {
+				case OPEN:
+					return []reflect.Value{reflect.ValueOf("CIRCUITBREAKER IS OPEN!")}
+				case HALF_OPEN:
+				case CLOSED:
+					errMsg := this.call(server, serverCB.ServiceIp, args)
+					if errMsg == "nil" {
+						serverCB.ReSet()
+					} else {
+						serverCB.RecordFailure()
+					}
+					return []reflect.Value{reflect.ValueOf(errMsg)}
+				}
+				return []reflect.Value{reflect.ValueOf("nil")}
 			})
 			val.Field(index).Set(proxyFunc)
 		}
 	}
-
-	go func() {
-		for {
-			var sec time.Duration = 20000
-			err := this.pullService()
-			if err != nil {
-				log.Println(err)
-				sec = 60000
-			}
-			time.Sleep(sec)
-		}
-	}()
 }

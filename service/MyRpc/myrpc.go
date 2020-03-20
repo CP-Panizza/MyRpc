@@ -15,6 +15,7 @@ type MyRpc struct {
 	RegisterCenterIp string
 }
 
+
 func NewMyRpc(ip string) *MyRpc{
 	if ip == "" {
 		panic(errors.New("SET INVALID IP"))
@@ -111,17 +112,17 @@ func accept(listen *net.TCPListener){
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("resave: %s", buf[:index])
+	fmt.Printf("resave: %s\n", buf[:index])
 	connect.Write([]byte("hello registerCenter!"))
 	connect.Close()
 }
 
 func (this *MyRpc)StartServer(port int){
-	go this.startHeartCheck()
-	this.sendDataToRegistCenter(port)
+	go this.startHeartCheck() //开启心跳检测
+	this.sendDataToRegistCenter(port) //发送数据到注册中心
 	listen, err := net.Listen("tcp", ":" + strconv.Itoa(port))
 	if err != nil {
 		panic(err)
 	}
-	rpc.Accept(listen)
+	rpc.Accept(listen) //开启服务监听
 }
