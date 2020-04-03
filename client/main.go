@@ -37,7 +37,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	client.StartPull(func(err error) {
+	client.StartPull(time.Second * 5,func(err error) {
 		if err != nil {
 			log.Println(err)
 		}
@@ -58,6 +58,7 @@ func main() {
 					println(err)
 				}
 				fmt.Println(str)
+				time.Sleep(time.Second * 2)
 			}
 		}()
 	}
@@ -76,7 +77,7 @@ func NewMyRpcClient(ip string) *MyRpcClient {
 }
 
 type MyRpcClient struct {
-	mutex            sync.Mutex
+	mutex            sync.RWMutex
 	RegisterCenterIp string
 	serviceList      []string
 	serviceMap       map[string][]*CircuitBreaker
@@ -90,6 +91,7 @@ const (
 
 //熔断器
 type CircuitBreaker struct {
+	Proportion       int   			//占比
 	failuerThreshold int           //故障次数阈值
 	retryTimePeriod  time.Duration //失败后从新尝试的时间间隔 纳秒
 	lastFailureTime  time.Duration
@@ -99,8 +101,9 @@ type CircuitBreaker struct {
 	Mutex            sync.Mutex
 }
 
-func NewCircuitBreaker(serviceIp string, failuerThreshold int, retryTimePeriod time.Duration) *CircuitBreaker {
+func NewCircuitBreaker(serviceIp string,proportion int ,failuerThreshold int, retryTimePeriod time.Duration) *CircuitBreaker {
 	cb := new(CircuitBreaker)
+	cb.Proportion = proportion
 	cb.ServiceIp = serviceIp
 	cb.failuerThreshold = failuerThreshold
 	cb.failureCount = 0
@@ -137,10 +140,15 @@ func (this *CircuitBreaker) RecordFailure() {
 	this.lastFailureTime = time.Duration(time.Now().Nanosecond())
 }
 
+type In_data struct {
+	Ip         string
+	Proportion int
+}
+
 type pullRecvData struct {
-	Ok   bool                    `json:"ok"`
-	Msg  string                  `json:"msg"`
-	Data [](map[string][]string) `json:"data"`
+	Ok   bool                       `json:"ok"`
+	Msg  string                     `json:"msg"`
+	Data [](map[string]([]In_data)) `json:"data"`
 }
 
 //从远端服务器拉取服务ip
@@ -189,7 +197,7 @@ func (this *MyRpcClient) pullService() error {
 			if len(ipsList) != 0 {
 				temp := new([]*CircuitBreaker)
 				for _, ip := range ipsList {
-					cb := NewCircuitBreaker(ip, 5, time.Minute*1)
+					cb := NewCircuitBreaker(ip.Ip, ip.Proportion , 5, time.Minute*1)
 					*temp = append(*temp, cb)
 				}
 				this.mutex.Lock()
@@ -221,8 +229,8 @@ func (this *MyRpcClient) pullService() error {
 
 //负载均衡算法，通过传入服务名称，负载均衡算法计算得出对应的服务器IP地址--多线程环境
 func (this *MyRpcClient) load_balance(serviceName string) (*CircuitBreaker, error) {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
 	cbs, ok := this.serviceMap[serviceName];
 	if !ok {
 		return nil, errors.New("CAN NOT FIND '" + serviceName + "' IN LOCAL SERVER TABLE")
@@ -250,8 +258,8 @@ func (this *MyRpcClient) Init() error {
 }
 
 //每隔一段时间去注册中心拉取一下服务
-func (this *MyRpcClient) StartPull(callBack func(err error)) {
-	ticker := time.NewTicker(time.Second * 5)
+func (this *MyRpcClient) StartPull(timer time.Duration ,callBack func(err error)) {
+	ticker := time.NewTicker(timer)
 	go func() {
 		for _ = range ticker.C {
 			callBack(this.pullService())
@@ -279,8 +287,7 @@ func (this *MyRpcClient) Implement(i ...interface{}) {
 				switch serverCB.GetState() {
 				case OPEN:
 					return []reflect.Value{reflect.ValueOf("CIRCUITBREAKER IS OPEN!")}
-				case HALF_OPEN:
-				case CLOSED:
+				case CLOSED, HALF_OPEN:
 					errMsg := this.call(server, serverCB.ServiceIp, args)
 					if errMsg == "nil" {
 						serverCB.ReSet()

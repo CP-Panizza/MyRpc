@@ -11,16 +11,17 @@ import (
 )
 
 type MyRpc struct {
+	Proportion int  //此微服务的占比
 	infos []string
 	RegisterCenterIp string
 }
 
 
-func NewMyRpc(ip string) *MyRpc{
+func NewMyRpc(ip string, proportion int) *MyRpc{
 	if ip == "" {
 		panic(errors.New("SET INVALID IP"))
 	}
-	return &MyRpc{RegisterCenterIp:ip}
+	return &MyRpc{RegisterCenterIp:ip, Proportion:proportion}
 }
 
 
@@ -58,6 +59,7 @@ func (this *MyRpc)sendDataToRegistCenter(port int){
 		Op          string
 		ServiceList []string
 		ServicePort string
+		Proportion int
 	}
 
 	conn, err := net.Dial("tcp", this.RegisterCenterIp + ":8527")
@@ -69,6 +71,7 @@ func (this *MyRpc)sendDataToRegistCenter(port int){
 		"REG",
 		this.infos,
 		":" + strconv.Itoa(port),
+		this.Proportion,
 	})
 
 	if err != nil {
@@ -89,6 +92,7 @@ func (this *MyRpc)sendDataToRegistCenter(port int){
 	conn.Close()
 }
 
+
 func (this *MyRpc)startHeartCheck(){
 	listen, err := net.ListenTCP("tcp", &net.TCPAddr{Port:8528})
 
@@ -105,12 +109,16 @@ func (this *MyRpc)startHeartCheck(){
 func accept(listen *net.TCPListener){
 	connect, err := listen.Accept()
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+		connect.Close()
+		return
 	}
 	buf := make([]byte, 64)
 	index, err := connect.Read(buf)
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
+		connect.Close()
+		return
 	}
 	fmt.Printf("resave: %s\n", buf[:index])
 	connect.Write([]byte("hello registerCenter!"))

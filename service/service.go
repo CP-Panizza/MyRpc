@@ -46,7 +46,7 @@ func (h *MyService) Do(req string, resp *string) error {
 
 
 func main() {
-	myrpc := MyRpc.NewMyRpc("127.0.0.1")
+	myrpc := MyRpc.NewMyRpc("127.0.0.1", 5)
 	myrpc.Register(new(struct{
 		HelleService
 		MyService
