@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"./MyRpc"
-)
+	)
 
 type User struct {
 	Name string
@@ -15,13 +15,8 @@ type HelleService struct {
 }
 
 func (h *HelleService) Hello(req int, resp *int) error {
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println(err)
-		}
-	}()
 
-	*resp = 10/req;
+	*resp = 1000;
 
 	return nil
 }

@@ -47,7 +47,7 @@ func main() {
 		go func() {
 			for {
 				var u int
-				err := service.Hello(10, &u)
+				err := service.Hello(0, &u)
 				if err != "nil" {
 					println(err)
 				}
@@ -58,7 +58,7 @@ func main() {
 					println(err)
 				}
 				fmt.Println(str)
-				time.Sleep(time.Second * 2)
+				time.Sleep(time.Second * 3)
 			}
 		}()
 	}
