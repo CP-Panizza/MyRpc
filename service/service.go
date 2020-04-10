@@ -16,7 +16,7 @@ type HelleService struct {
 
 func (h *HelleService) Hello(req int, resp *int) error {
 
-	*resp = 1000;
+	*resp = 1000
 
 	return nil
 }

@@ -30,6 +30,20 @@ type AddUser struct {
 }
 
 func main() {
+
+	var fun func(int) error
+
+	funVal := reflect.MakeFunc(reflect.TypeOf(fun), func(args []reflect.Value) (results []reflect.Value) {
+		fmt.Println(args[0])
+		err := errors.New("must err")
+		return []reflect.Value{reflect.ValueOf(&err).Elem()}
+	})
+
+	errs := funVal.Call([]reflect.Value{reflect.ValueOf(100)})
+
+	fmt.Println(errs[0])
+
+
 	service := HelleServiceInterface{}
 	client := NewMyRpcClient("127.0.0.1")
 	client.Implement(&service)
@@ -37,7 +51,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	client.StartPull(time.Second * 5,func(err error) {
+	client.StartPull(time.Second * 60,func(err error) {
 		if err != nil {
 			log.Println(err)
 		}
